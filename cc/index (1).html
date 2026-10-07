@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact Book</title>
+<style>
+  :root{--bg:#f6f7fb;--card:#fff;--ink:#1c2233;--muted:#7a8296;--line:#e2e6f0;--accent:#3b5bdb;--danger:#d6336c}
+  @media (prefers-color-scheme:dark){:root{--bg:#12151f;--card:#1b2030;--ink:#eceff7;--muted:#98a1b8;--line:#2b3247;--accent:#7c93ff;--danger:#ff7aa8}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  main{max-width:480px;margin:0 auto;padding:32px 16px 64px}
+  h1{margin:0 0 16px;font-size:1.6rem}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  form{display:grid;gap:10px;margin-bottom:20px}
+  input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;font:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button{font:inherit;cursor:pointer;border:0;border-radius:10px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:600}
+  button.link{background:none;color:var(--accent);padding:4px 8px;font-weight:500}
+  button.link.del{color:var(--danger)}
+  #cancel{background:none;color:var(--muted)}
+  ul{list-style:none;margin:12px 0 0;padding:0}
+  li{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+  .info{flex:1;min-width:0}
+  .name{font-weight:600}
+  .phone{color:var(--muted);font-size:.95rem}
+  .empty{color:var(--muted);text-align:center;padding:20px 0}
+  #cmdbox{margin-bottom:20px}
+  #cmdbox label{display:block;font-weight:600;margin-bottom:8px}
+  .cmdrow{display:flex;gap:8px}
+  .cmdrow input{flex:1}
+  #msg{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:.95rem;border:1px solid var(--line)}
+  #msg.ok{border-color:#2f9e44;color:#2f9e44}
+  #msg.err{border-color:var(--danger);color:var(--danger)}
+  .hint{color:var(--muted);font-size:.85rem;margin:8px 0 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>Contact Book</h1>
+
+  <div id="cmdbox" class="card">
+    <label for="cmd">Smart command (prompt)</label>
+    <div class="cmdrow">
+      <input id="cmd" placeholder='e.g. add Ali 03001234567' autocomplete="off">
+      <button id="run" type="button">Run</button>
+    </div>
+    <div id="msg" role="status" aria-live="polite" hidden></div>
+    <p class="hint">Examples: <b>add Ali 03001234567</b> · <b>update Ali number 03111234567</b> · <b>rename Ali to Ahmed</b> · <b>delete Ahmed</b> · <b>search Ali</b> · <b>I want to create a contact with name Sara and number 03211234567</b></p>
+  </div>
+
+  <form id="form" class="card">
+    <input id="name" placeholder="Name" required maxlength="50">
+    <input id="phone" type="tel" inputmode="numeric" placeholder="Phone number (digits only)" required minlength="7" maxlength="15" pattern="\+?[0-9]{7,15}" title="Digits only (7 to 15 digits). A leading + is allowed.">
+    <button id="save" type="submit">Add contact</button>
+    <button id="cancel" type="button" hidden>Cancel</button>
+  </form>
+
+  <div class="card">
+    <input id="search" type="search" placeholder="Search name or number">
+    <ul id="list"></ul>
+  </div>
+</main>
+
+<script>
+  const KEY = "contacts-v1";
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
+  let editId = null;
+  const $ = id => document.getElementById(id);
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(items)); } catch (e) {} };
+  const esc = s => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  $("form").addEventListener("submit", e => {
+    e.preventDefault();
+    const name = $("name").value.trim(), phone = $("phone").value.trim();
+    if (!name || !phone) return;
+    if (editId) {
+      const c = items.find(c => c.id === editId);
+      if (c) { c.name = name; c.phone = phone; }
+    } else {
+      items.unshift({ id: Date.now().toString(36), name, phone });
+    }
+    reset(); persist(); render();
+  });
+
+  function reset() {
+    editId = null; $("form").reset();
+    $("save").textContent = "Add contact"; $("cancel").hidden = true;
+  }
+  $("cancel").onclick = reset;
+
+  // Phone field: digits only (and a leading +)
+  $("phone").addEventListener("input", e => {
+    const v = e.target.value;
+    e.target.value = (v.trim().startsWith("+") ? "+" : "") + v.replace(/\D/g, "");
+  });
+
+  function edit(id) {
+    const c = items.find(c => c.id === id); if (!c) return;
+    editId = id; $("name").value = c.name; $("phone").value = c.phone;
+    $("save").textContent = "Save changes"; $("cancel").hidden = false;
+    $("name").focus(); window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function del(id) {
+    if (!confirm("Delete this contact?")) return;
+    items = items.filter(c => c.id !== id);
+    if (editId === id) reset();
+    persist(); render();
+  }
+
+  function render() {
+    const q = $("search").value.toLowerCase();
+    const shown = items.filter(c => (c.name + " " + c.phone).toLowerCase().includes(q));
+    $("list").innerHTML = shown.length ? shown.map(c => `
+      <li>
+        <div class="info"><div class="name">${esc(c.name)}</div><div class="phone">${esc(c.phone)}</div></div>
+        <button class="link" onclick="edit('${c.id}')">Edit</button>
+        <button class="link del" onclick="del('${c.id}')">Delete</button>
+      </li>`).join("")
+      : `<li class="empty">${items.length ? "No matches." : "No contacts yet. Add one above."}</li>`;
+  }
+  $("search").addEventListener("input", render);
+
+  // ---------- Smart command (prompt) ----------
+  const W = l => new Set(l.split(" "));
+  const INTENT = {
+    del: W("delete remove hatao hata hatado mitao mita mitado nikalo nikal"),
+    upd: W("update edit change modify badlo badal badlen tabdeel"),
+    add: W("add create save insert jodo jod jodein shamil banao bana naya"),
+    find: W("search find show list dikhao dikha dhundo dhoondo talash")
+  };
+  const STOP = W("i want wanna would like need can could you will my me mine to please plz kindly lets let us also just this that it be have has having contact contacts number no nbr phone mobile name naam named called is are as the a an with of from for in on at book mein mai se ye yeh new and ya aur ka ki ko ke mera meri mere karo kar do dein den de kro krdo");
+  const say = (t, ok) => { const m = $("msg"); m.hidden = false; m.textContent = t; m.className = ok ? "ok" : "err"; };
+  const title = n => n.replace(/\p{L}[\p{L}'.-]*/gu, w => w[0].toUpperCase() + w.slice(1));
+  const cleanName = txt => txt.replace(/['\u2019]s\b/gi, "").split(/[\s,]+/)
+    .map(w => w.replace(/^[^\p{L}\p{N}+]+|[^\p{L}\p{N}]+$/gu, "")).filter(w => w && !STOP.has(w.toLowerCase()) && !/\d/.test(w)).join(" ");
+  // "with name ahmad and number ..." -> "ahmad"
+  const NAME_RE = /\b(?:name|named|called|naam)\s*(?:is|:|=)?\s+([\p{L}][\p{L}\s.'-]*?)(?=\s+(?:and|with|phone|number|no|nbr|mobile|having|has|ka|ki|aur)\b|\s*[,\d+]|$)/iu;
+  const findBy = (name, phone) => items.filter(c => (!name || c.name.toLowerCase().includes(name.toLowerCase())) && (!phone || c.phone === phone));
+  function pickOne(name, phone, verb) {
+    let m = findBy(name, phone);
+    if (m.length > 1) { const ex = m.filter(c => c.name.toLowerCase() === name.toLowerCase()); if (ex.length === 1) m = ex; }
+    if (!m.length) { say(`No contact found matching "${name || phone}".`, false); return null; }
+    if (m.length > 1) { say(`${m.length} contacts match (${m.map(c => c.name).join(", ")}). Please type the full name to ${verb.toLowerCase()}.`, false); return null; }
+    return m[0];
+  }
+
+  function runCommand(text) {
+    text = text.trim();
+    if (!text) return say("Please type a command first.", false);
+
+    // rename X to Y
+    const rn = text.match(/^\s*rename\s+(.+?)\s+(?:to|as)\s+(.+)$/i);
+    if (rn) {
+      const oldN = cleanName(rn[1]), newN = cleanName(rn[2]);
+      if (!oldN || !newN) return say("Incomplete info: please give both the old and the new name (e.g. rename Ali to Ahmed).", false);
+      const c = pickOne(oldN, "", "Rename"); if (!c) return;
+      const before = c.name; c.name = title(newN).slice(0, 50); persist(); render();
+      return say(`Contact renamed: ${before} \u2192 ${c.name}.`, true);
+    }
+
+    // phone extraction
+    const pm = text.match(/\+?\d[\d\s-]*/);
+    let phone = "", rest = text;
+    if (pm) {
+      const digits = pm[0].replace(/\D/g, "");
+      phone = (pm[0].trim().startsWith("+") ? "+" : "") + digits;
+      rest = text.replace(pm[0], " ");
+      if (digits.length < 7 || digits.length > 15)
+        return say("Invalid phone number: it must be 7 to 15 digits. Please provide complete information.", false);
+    }
+    const words = rest.toLowerCase().split(/[^\p{L}]+/u);
+    const has = k => words.some(w => INTENT[k].has(w));
+    const intent = has("del") ? "del" : has("upd") ? "upd" : has("add") ? "add" : has("find") ? "find" : null;
+    if (!intent) return say("Sorry, I couldn't understand that command. Try add, update, rename, delete or search.", false);
+
+    const explicit = rest.match(NAME_RE);
+    const name = explicit ? cleanName(explicit[1]) :
+      cleanName(rest.split(/[\s,]+/).filter(w => !Object.values(INTENT).some(s => s.has(w.toLowerCase().replace(/[^\p{L}]/gu, "")))).join(" "));
+
+    if (intent === "add") {
+      const miss = [!name && "the name", !phone && "the phone number"].filter(Boolean);
+      if (miss.length) return say(`Not enough information: ${miss.join(" and ")} is missing. A contact is added only with complete info (name + phone number).`, false);
+      const dup = items.find(c => c.phone === phone);
+      if (dup) return say(`This number is already saved under "${dup.name}".`, false);
+      const nm = title(name).slice(0, 50);
+      items.unshift({ id: Date.now().toString(36), name: nm, phone }); persist(); render();
+      return say(`Contact added: ${nm} \u2013 ${phone}`, true);
+    }
+    if (intent === "upd") {
+      const miss = [!name && "the contact name", !phone && "the new phone number"].filter(Boolean);
+      if (miss.length) return say(`Not enough information: ${miss.join(" and ")} is missing. Both are needed to update (e.g. update Ali number 03001234567).`, false);
+      const c = pickOne(name, "", "Update"); if (!c) return;
+      c.phone = phone; persist(); render();
+      return say(`${c.name}'s number updated to ${phone}.`, true);
+    }
+    if (intent === "del") {
+      if (!name && !phone) return say("Not enough information: which contact should be deleted? Please give a name or phone number.", false);
+      const c = pickOne(name, phone, "Delete"); if (!c) return;
+      items = items.filter(x => x.id !== c.id); if (editId === c.id) reset(); persist(); render();
+      return say(`Contact deleted: ${c.name} \u2013 ${c.phone}`, true);
+    }
+    // find
+    $("search").value = name || phone; render();
+    const n = findBy(name, phone).length;
+    say(name || phone ? `${n} contact(s) found for "${name || phone}".` : "Showing all contacts.", true);
+  }
+  $("run").onclick = () => { runCommand($("cmd").value); };
+  $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); runCommand($("cmd").value); } });
+  $("cmd").addEventListener("input", () => { $("msg").hidden = true; });
+  render();
+</script>
+</body>
+</html>
